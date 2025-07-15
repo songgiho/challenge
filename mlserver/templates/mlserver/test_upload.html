@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>ML 서버 연동 테스트</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        .result, .error, .debug { margin-top: 2em; padding: 1em; border-radius: 6px; }
+        .result { background: #e6ffe6; border: 1px solid #b2ffb2; }
+        .error { background: #ffe6e6; border: 1px solid #ffb2b2; color: #b20000; }
+        .debug { background: #e6f0ff; border: 1px solid #b2cfff; }
+        pre { background: #f4f4f4; padding: 1em; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <h1>ML 서버 연동 테스트</h1>
+    <form method="post" enctype="multipart/form-data">
+        <label>테스트 이미지 업로드: <input type="file" name="file" required></label>
+        <button type="submit">업로드 및 테스트</button>
+    </form>
+
+    {% if debug %}
+        <div class="debug">
+            <h2>업로드 파일 디버그 정보</h2>
+            <pre>{{ debug|safe }}</pre>
+        </div>
+    {% endif %}
+    {% if result %}
+        <div class="result">
+            <h2>ML 서버 응답 결과</h2>
+            <pre>{{ result|safe }}</pre>
+        </div>
+    {% endif %}
+    {% if error %}
+        <div class="error">
+            <h2>에러/디버그 정보</h2>
+            <pre>{{ error }}</pre>
+        </div>
+    {% endif %}
+    
+    <div style="margin-top:2em; padding:1em; border:1px solid #b2cfff; border-radius:6px; background:#f8faff;">
+        <h2>task_id로 상태 조회</h2>
+        <input type="text" id="task-id-input" placeholder="task_id 입력" style="width:350px;">
+        <button type="button" onclick="checkTaskStatus()">상태 조회</button>
+        <div id="task-status-result" style="margin-top:1em;"></div>
+    </div>
+
+    <div style="margin-top:2em; padding:1em; border:1px solid #b2cfff; border-radius:6px; background:#f8faff;">
+        <h2>task_id로 실시간 WebSocket 진행상황 보기</h2>
+        <input type="text" id="ws-task-id-input" placeholder="task_id 입력" style="width:350px;">
+        <button type="button" onclick="connectWS()" id="ws-connect-btn">WebSocket 연결</button>
+        <button type="button" onclick="disconnectWS()" id="ws-disconnect-btn" disabled>연결 해제</button>
+        <div id="ws-status" style="margin-top:1em; font-weight:bold; color:#007bff;">연결되지 않음</div>
+        <div id="ws-task-info" style="margin-top:1em; display:none;">
+            <div>상태: <span id="ws-task-status"></span></div>
+            <div>진행률: <span id="ws-task-progress"></span></div>
+            <div>메시지: <span id="ws-task-message"></span></div>
+            <div id="ws-task-result"></div>
+        </div>
+        <div style="margin-top:1em;">
+            <textarea id="ws-log" style="width:100%;height:120px;font-family:monospace;font-size:12px;" readonly></textarea>
+            <button type="button" onclick="clearWSLog()">로그 지우기</button>
+        </div>
+    </div>
+    <script>
+    async function checkTaskStatus() {
+        const taskId = document.getElementById('task-id-input').value.trim();
+        const resultDiv = document.getElementById('task-status-result');
+        if (!taskId) {
+            resultDiv.innerHTML = '<span style="color:red">task_id를 입력하세요.</span>';
+            return;
+        }
+        resultDiv.innerHTML = '조회 중...';
+        try {
+            const resp = await fetch(`/api/v1/task/${taskId}/`);
+            if (!resp.ok) {
+                const text = await resp.text();
+                resultDiv.innerHTML = `<span style='color:red'>오류: ${resp.status} ${resp.statusText}<br>${text}</span>`;
+                return;
+            }
+            const data = await resp.json();
+            resultDiv.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+        } catch (e) {
+            resultDiv.innerHTML = `<span style='color:red'>조회 실패: ${e.message}</span>`;
+        }
+    }
+
+    // WebSocket 관련 변수 및 함수
+    let ws = null;
+    function connectWS(taskId) {
+        if (!taskId) {
+            alert('task_id를 입력하세요!');
+            return;
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+        }
+        document.getElementById('ws-task-id-input').value = taskId;
+        const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + `/ws/task/${taskId}/`;
+        ws = new WebSocket(wsUrl);
+        ws.onopen = function() {
+            document.getElementById('ws-status').textContent = 'WebSocket 연결됨';
+            document.getElementById('ws-connect-btn').disabled = true;
+            document.getElementById('ws-disconnect-btn').disabled = false;
+            wsLog('WebSocket 연결됨');
+        };
+        ws.onclose = function(e) {
+            document.getElementById('ws-status').textContent = '연결되지 않음';
+            document.getElementById('ws-connect-btn').disabled = false;
+            document.getElementById('ws-disconnect-btn').disabled = true;
+            wsLog('WebSocket 연결 해제됨');
+        };
+        ws.onerror = function(e) {
+            wsLog('WebSocket 오류 발생');
+        };
+        ws.onmessage = function(e) {
+            wsLog('수신: ' + e.data);
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type && data.data) {
+                    document.getElementById('ws-task-info').style.display = '';
+                    document.getElementById('ws-task-status').textContent = data.data.status || '';
+                    document.getElementById('ws-task-progress').textContent = (data.data.progress !== undefined ? (data.data.progress * 100).toFixed(1) + '%' : '');
+                    document.getElementById('ws-task-message').textContent = data.data.message || '';
+                    if (data.data.result) {
+                        document.getElementById('ws-task-result').innerHTML = '<pre>' + JSON.stringify(data.data.result, null, 2) + '</pre>';
+                    } else {
+                        document.getElementById('ws-task-result').innerHTML = '';
+                    }
+                }
+            } catch (err) {
+                wsLog('JSON 파싱 오류: ' + err.message);
+            }
+        };
+    }
+    function disconnectWS() {
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+    }
+    function wsLog(msg) {
+        const log = document.getElementById('ws-log');
+        log.value += '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n';
+        log.scrollTop = log.scrollHeight;
+    }
+    function clearWSLog() {
+        document.getElementById('ws-log').value = '';
+    }
+
+    // 업로드 폼 자동 WebSocket 연결 연동
+    document.querySelector('form[enctype="multipart/form-data"]').addEventListener('submit', async function(e) {
+        // 기본 submit 막고 Ajax로 업로드
+        e.preventDefault();
+        const form = e.target;
+        const fileInput = form.querySelector('input[type="file"]');
+        if (!fileInput.files.length) {
+            alert('파일을 선택하세요!');
+            return;
+        }
+        const formData = new FormData(form);
+        // 업로드 상태/결과 영역 초기화
+        document.getElementById('ws-task-info').style.display = 'none';
+        clearWSLog();
+        document.getElementById('ws-status').textContent = '업로드 중...';
+        document.getElementById('ws-connect-btn').disabled = true;
+        document.getElementById('ws-disconnect-btn').disabled = true;
+        try {
+            const resp = await fetch(form.action || '/api/v1/estimate_async/', {
+                method: 'POST',
+                body: formData
+            });
+            const text = await resp.text();
+            let data = null;
+            try { data = JSON.parse(text); } catch { data = null; }
+            if (!resp.ok || !data || !data.task_id) {
+                document.getElementById('ws-status').textContent = '업로드 실패';
+                wsLog('업로드 실패: ' + text);
+                document.getElementById('ws-connect-btn').disabled = false;
+                return;
+            }
+            document.getElementById('ws-status').textContent = '업로드 성공, WebSocket 자동 연결 중...';
+            wsLog('업로드 성공, task_id: ' + data.task_id);
+            connectWS(data.task_id);
+        } catch (err) {
+            document.getElementById('ws-status').textContent = '업로드 오류';
+            wsLog('업로드 오류: ' + err.message);
+            document.getElementById('ws-connect-btn').disabled = false;
+        }
+    });
+    </script>
+</body>
+</html> 
