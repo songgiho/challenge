@@ -7,6 +7,7 @@ from asgiref.sync import async_to_sync
 from .models import MassEstimationTask
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
+from .services import run_ml_task_sync
 
 
 @shared_task(bind=True)
@@ -144,8 +145,11 @@ def process_mass_estimation(self, task_id):
 @shared_task(bind=True)
 def process_image_upload(self, task_id):
     """
-    이미지 업로드 후 처리 작업
+    이미지 업로드 후 ML 서버로 처리 작업
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     try:
         task = MassEstimationTask.objects.get(task_id=task_id)
         channel_layer = get_channel_layer()
@@ -155,13 +159,20 @@ def process_image_upload(self, task_id):
             raise Exception("업로드된 이미지 파일이 없습니다.")
         
         # 파일 경로 확인
-        if not default_storage.exists(task.image_file.name):
-            raise Exception("이미지 파일을 찾을 수 없습니다.")
-        
+        image_path = None
+        if task.image_file:
+            try:
+                image_path = default_storage.path(task.image_file.name)
+            except Exception as e:
+                logger.error(f"default_storage.path 변환 오류: {e}")
+                image_path = None
+        if not image_path or not os.path.exists(image_path):
+            raise Exception("이미지 파일 경로가 올바르지 않거나 파일이 존재하지 않습니다.")
         # 작업 시작
         task.status = 'processing'
         task.save()
         
+        # Django WebSocket으로 시작 메시지 전송
         async_to_sync(channel_layer.group_send)(
             f"task_{task.task_id}",
             {
@@ -169,78 +180,66 @@ def process_image_upload(self, task_id):
                 "task_id": task.task_id,
                 "data": {
                     "status": "processing",
-                    "message": "이미지 분석을 시작합니다."
+                    "progress": 0.0,
+                    "message": "ML 서버에 이미지 전송 중..."
                 }
             }
         )
         
-        # 이미지 처리 시뮬레이션
-        processing_steps = [
-            "이미지 로딩 중...",
-            "이미지 전처리 중...",
-            "음식 객체 감지 중...",
-            "질량 추정 계산 중...",
-            "결과 검증 중..."
-        ]
+        # ML 서버 API 호출 및 WebSocket 연동
+        logger.info(f"ML 서버 작업 시작: {task.task_id}")
+        logger.info(f"이미지 파일명: {task.image_file.name}")
+        logger.info(f"이미지 파일 경로: {image_path}")
         
-        for i, step_message in enumerate(processing_steps):
-            progress = int(((i + 1) / len(processing_steps)) * 100)
+        # ML 서버 작업 실행
+        result = run_ml_task_sync(task.task_id, image_path)
+        
+        if result["success"]:
+            # ML 서버 작업이 성공적으로 완료됨
+            # (결과는 WebSocket을 통해 이미 전송됨)
+            logger.info(f"ML 서버 작업 완료: {task.task_id}")
             
-            task.progress = progress
+            # 작업 상태 업데이트
+            task.status = 'completed'
+            task.progress = 100
             task.save()
             
+            return f"ML 서버 작업 완료: {task_id}"
+        else:
+            # ML 서버 작업 실패
+            error_msg = result.get("error", "알 수 없는 오류")
+            logger.error(f"ML 서버 작업 실패: {error_msg}")
+            
+            task.status = 'failed'
+            task.error = error_msg
+            task.save()
+            
+            # 실패 메시지 전송
             async_to_sync(channel_layer.group_send)(
                 f"task_{task.task_id}",
                 {
-                    "type": "task.update",
+                    "type": "task.failed",
                     "task_id": task.task_id,
                     "data": {
-                        "status": "processing",
-                        "progress": progress / 100.0,  # 0-100을 0-1로 변환
-                        "message": step_message
+                        "status": "failed",
+                        "error": error_msg,
+                        "message": f"ML 서버 처리 실패: {error_msg}"
                     }
                 }
             )
             
-            time.sleep(2)  # 각 단계별 처리 시간
-        
-        # 결과 생성
-        result = {
-            "estimated_mass": 320.0,
-            "confidence": 0.92,
-            "food_type": "김치찌개",
-            "unit": "g",
-            "image_processed": True,
-            "processing_time": "10초"
-        }
-        
-        task.status = 'completed'
-        task.progress = 100
-        task.result = result
-        task.save()
-        
-        async_to_sync(channel_layer.group_send)(
-            f"task_{task.task_id}",
-            {
-                "type": "task.completed",
-                "task_id": task.task_id,
-                "data": {
-                    "status": "completed",
-                    "progress": 1.0,  # 100%를 1.0으로 변환
-                    "result": result,
-                    "message": "이미지 분석이 완료되었습니다."
-                }
-            }
-        )
-        
-        return f"Image processing completed for task {task_id}"
+            raise Exception(f"ML 서버 작업 실패: {error_msg}")
         
     except Exception as e:
+        logger.error(f"process_image_upload 오류: {str(e)}")
+        
+        # 작업 상태 업데이트
         task = MassEstimationTask.objects.get(task_id=task_id)
         task.status = 'failed'
         task.error = str(e)
         task.save()
         
+        # 에러 메시지 전송
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f"task_{task.task_id}",

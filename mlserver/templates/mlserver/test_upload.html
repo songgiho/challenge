@@ -388,10 +388,9 @@
                     // 업로드 상태 업데이트
                     document.getElementById('upload-status').innerHTML = '<div class="status completed">업로드 완료</div>';
                     
-                    // WebSocket 연결 버튼 활성화
-                    document.getElementById('connect-btn').disabled = false;
-                    
-                    logMessage('이제 WebSocket 연결 버튼을 눌러주세요.');
+                    // 자동으로 WebSocket 연결
+                    logMessage('자동으로 WebSocket 연결을 시도합니다...');
+                    connectWebSocket();
                 } else {
                     document.getElementById('upload-status').innerHTML = '<div class="status failed">업로드 실패</div>';
                     logMessage('업로드 실패: ' + data.error);

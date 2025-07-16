@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 frontend
+
+#저장된 이미지
+media/uploads
