@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Celery 작업 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .processing { background-color: #fff3cd; color: #856404; }
+        .completed { background-color: #d1ecf1; color: #0c5460; }
+        .failed { background-color: #f8d7da; color: #721c24; }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        .message-log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .result-box {
+            background-color: #e8f5e8;
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .task-info {
+            background-color: #e6f0ff;
+            border: 1px solid #b2cfff;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Celery 작업 테스트</h1>
+    
+    <div class="container">
+        <h2>🔌 WebSocket 연결 상태</h2>
+        <div id="ws-status" class="status disconnected">연결되지 않음</div>
+        <button id="connect-btn" onclick="connectWebSocket()">WebSocket 연결</button>
+        <button id="disconnect-btn" onclick="disconnectWebSocket()" disabled>연결 해제</button>
+    </div>
+
+    <div class="container">
+        <h2>🚀 Celery 작업 테스트</h2>
+        <button onclick="createTestTask()">테스트 작업 생성</button>
+        <button onclick="createImageTask()">이미지 작업 생성</button>
+        <div id="task-info" class="task-info" style="display: none;">
+            <h3>현재 작업 정보</h3>
+            <p><strong>작업 ID:</strong> <span id="task-id"></span></p>
+            <p><strong>상태:</strong> <span id="task-status"></span></p>
+            <p><strong>진행률:</strong></p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            <p><strong>메시지:</strong> <span id="task-message"></span></p>
+            <div id="task-result"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>📝 실시간 메시지 로그</h2>
+        <div class="message-log" id="message-log"></div>
+        <button onclick="clearLog()">로그 지우기</button>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentTaskId = null;
+        const API_BASE_URL = window.location.origin + '/mlserver';
+
+        // 로그 메시지 추가
+        function logMessage(message) {
+            const log = document.getElementById('message-log');
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `[${timestamp}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // 로그 지우기
+        function clearLog() {
+            document.getElementById('message-log').innerHTML = '';
+        }
+
+        // WebSocket 연결
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                logMessage('이미 연결되어 있습니다.');
+                return;
+            }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/task/${currentTaskId}/`;
+            
+            logMessage(`WebSocket 연결 시도: ${wsUrl}`);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function(event) {
+                logMessage('WebSocket 연결됨');
+                document.getElementById('ws-status').textContent = '연결됨';
+                document.getElementById('ws-status').className = 'status connected';
+                document.getElementById('connect-btn').disabled = true;
+                document.getElementById('disconnect-btn').disabled = false;
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                logMessage(`메시지 수신: ${JSON.stringify(data)}`);
+                
+                if (data.type === 'task.update') {
+                    updateTaskInfo(data.data);
+                } else if (data.type === 'task.completed') {
+                    updateTaskInfo(data.data);
+                    showResult(data.data);
+                } else if (data.type === 'task.failed') {
+                    updateTaskInfo(data.data);
+                    showError(data.data);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                logMessage('WebSocket 연결 해제됨');
+                document.getElementById('ws-status').textContent = '연결 해제됨';
+                document.getElementById('ws-status').className = 'status disconnected';
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('disconnect-btn').disabled = true;
+            };
+            
+            ws.onerror = function(error) {
+                logMessage('WebSocket 오류: ' + error);
+                document.getElementById('ws-status').textContent = '연결 오류';
+                document.getElementById('ws-status').className = 'status failed';
+            };
+        }
+
+        // WebSocket 연결 해제
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // 작업 정보 업데이트
+        function updateTaskInfo(data) {
+            document.getElementById('task-info').style.display = 'block';
+            document.getElementById('task-id').textContent = currentTaskId;
+            document.getElementById('task-status').textContent = data.status || '알 수 없음';
+            document.getElementById('task-message').textContent = data.message || '';
+            
+            if (data.progress !== undefined) {
+                const progressPercent = Math.round(data.progress * 100);
+                document.getElementById('progress-fill').style.width = progressPercent + '%';
+            }
+        }
+
+        // 결과 표시
+        function showResult(data) {
+            const resultDiv = document.getElementById('task-result');
+            resultDiv.innerHTML = `
+                <div class="result-box">
+                    <h4>✅ 작업 완료</h4>
+                    <p><strong>추정 질량:</strong> ${data.result?.estimated_mass || 'N/A'} ${data.result?.unit || 'g'}</p>
+                    <p><strong>신뢰도:</strong> ${data.result?.confidence || 'N/A'}</p>
+                    <p><strong>음식 종류:</strong> ${data.result?.food_type || 'N/A'}</p>
+                    <pre>${JSON.stringify(data.result, null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        // 오류 표시
+        function showError(data) {
+            const resultDiv = document.getElementById('task-result');
+            resultDiv.innerHTML = `
+                <div class="error-box">
+                    <h4>❌ 작업 실패</h4>
+                    <p><strong>오류:</strong> ${data.error || '알 수 없는 오류'}</p>
+                </div>
+            `;
+        }
+
+        // 테스트 작업 생성
+        async function createTestTask() {
+            try {
+                logMessage('테스트 작업 생성 중...');
+                
+                const response = await fetch(`${API_BASE_URL}/api/test/create-task/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                logMessage(`응답 상태: ${response.status}`);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    logMessage(`HTTP 오류: ${response.status} - ${errorText}`);
+                    return;
+                }
+                
+                const result = await response.json();
+                logMessage(`응답 데이터: ${JSON.stringify(result)}`);
+                
+                if (result.success) {
+                    currentTaskId = result.data.task_id;
+                    logMessage(`작업 생성됨: ${currentTaskId}`);
+                    logMessage(`Celery 작업 시작됨: ${result.data.celery_task_started}`);
+                    
+                    updateTaskInfo({
+                        status: result.data.status,
+                        message: result.data.message
+                    });
+                    
+                    // WebSocket 연결
+                    connectWebSocket();
+                } else {
+                    logMessage(`작업 생성 실패: ${result.error}`);
+                }
+            } catch (error) {
+                logMessage(`오류: ${error.message}`);
+                logMessage(`오류 스택: ${error.stack}`);
+            }
+        }
+
+        // 이미지 작업 생성
+        async function createImageTask() {
+            try {
+                logMessage('이미지 작업 생성 중...');
+                
+                // 간단한 테스트용 이미지 데이터 (실제로는 파일 업로드)
+                const formData = new FormData();
+                const testImage = new Blob(['test'], { type: 'image/jpeg' });
+                formData.append('image', testImage, 'test.jpg');
+                
+                const response = await fetch(`${API_BASE_URL}/api/upload/`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentTaskId = result.data.task_id;
+                    logMessage(`이미지 작업 생성됨: ${currentTaskId}`);
+                    logMessage(`Celery 작업 시작됨: ${result.data.celery_task_started}`);
+                    
+                    updateTaskInfo({
+                        status: result.data.status,
+                        message: result.data.message
+                    });
+                    
+                    // WebSocket 연결
+                    connectWebSocket();
+                } else {
+                    logMessage(`이미지 작업 생성 실패: ${result.error}`);
+                }
+            } catch (error) {
+                logMessage(`오류: ${error.message}`);
+            }
+        }
+
+        // 페이지 로드 시 초기화
+        window.onload = function() {
+            logMessage('Celery 작업 테스트 페이지 로드됨');
+        };
+    </script>
+</body>
+</html> 
