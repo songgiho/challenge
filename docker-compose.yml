@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # Django 백엔드 서버
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./shared_db.sqlite3:/app/shared_db.sqlite3
+    environment:
+      - DB_HOST=backend
+      - DEBUG=True
+    command: python manage.py runserver 0.0.0.0:8000
+
+  # Next.js 프론트엔드 서버
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_DB_HOST=backend
+      - NEXT_PUBLIC_DB_PORT=8000
+    depends_on:
+      - backend
+    command: npm run dev
+
+  # PostgreSQL (선택사항)
+  db:
+    image: postgres:13
+    environment:
+      - POSTGRES_DB=challenge_db
+      - POSTGRES_USER=challenge_user
+      - POSTGRES_PASSWORD=challenge_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data: 
