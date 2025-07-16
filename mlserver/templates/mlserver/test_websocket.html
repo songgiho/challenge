@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .message-log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔌 WebSocket 연결 테스트</h1>
+    
+    <div>
+        <div id="ws-status" class="status disconnected">연결되지 않음</div>
+        <button id="connect-btn" onclick="connectWebSocket()">WebSocket 연결</button>
+        <button id="disconnect-btn" onclick="disconnectWebSocket()" disabled>연결 해제</button>
+        <button id="send-btn" onclick="sendMessage()" disabled>테스트 메시지 전송</button>
+    </div>
+
+    <div>
+        <h3>📝 메시지 로그</h3>
+        <div class="message-log" id="message-log"></div>
+        <button onclick="clearLog()">로그 지우기</button>
+    </div>
+
+    <script>
+        let ws = null;
+        const WS_BASE_URL = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host;
+
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                logMessage('이미 연결되어 있습니다.');
+                return;
+            }
+
+            ws = new WebSocket(WS_BASE_URL + '/ws/test/');
+            
+            ws.onopen = function(event) {
+                updateConnectionStatus('connected', 'WebSocket 연결됨');
+                document.getElementById('connect-btn').disabled = true;
+                document.getElementById('disconnect-btn').disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                logMessage('WebSocket 연결됨');
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    logMessage('수신: ' + JSON.stringify(data, null, 2));
+                } catch (error) {
+                    logMessage('JSON 파싱 오류: ' + error.message);
+                    logMessage('원본 데이터: ' + event.data);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                updateConnectionStatus('disconnected', 'WebSocket 연결 해제됨');
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('disconnect-btn').disabled = true;
+                document.getElementById('send-btn').disabled = true;
+                logMessage('WebSocket 연결 해제됨 (코드: ' + event.code + ')');
+            };
+            
+            ws.onerror = function(error) {
+                updateConnectionStatus('disconnected', 'WebSocket 오류 발생');
+                logMessage('WebSocket 오류: ' + error);
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function sendMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = '테스트 메시지 - ' + new Date().toLocaleTimeString();
+                ws.send(message);
+                logMessage('전송: ' + message);
+            }
+        }
+
+        function updateConnectionStatus(status, message) {
+            const statusDiv = document.getElementById('ws-status');
+            statusDiv.className = 'status ' + status;
+            statusDiv.textContent = message;
+        }
+
+        function logMessage(message) {
+            const log = document.getElementById('message-log');
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `[${timestamp}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('message-log').innerHTML = '';
+        }
+    </script>
+</body>
+</html> 

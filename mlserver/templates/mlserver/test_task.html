@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>음식 질량 추정 작업 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .processing { background-color: #fff3cd; color: #856404; }
+        .completed { background-color: #d1ecf1; color: #0c5460; }
+        .failed { background-color: #f8d7da; color: #721c24; }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        .message-log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .result-box {
+            background-color: #e8f5e8;
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .error-box {
+            background-color: #f8d7da;
+            border: 1px solid #dc3545;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+            color: #721c24;
+        }
+        .task-info {
+            background-color: #e6f0ff;
+            border: 1px solid #b2cfff;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🍽️ 음식 질량 추정 작업 테스트</h1>
+    
+    <div class="container">
+        <h2>🔌 WebSocket 연결 상태</h2>
+        <div id="ws-status" class="status disconnected">연결되지 않음</div>
+        <button id="connect-btn" onclick="connectWebSocket()" disabled>WebSocket 연결</button>
+        <button id="disconnect-btn" onclick="disconnectWebSocket()" disabled>연결 해제</button>
+    </div>
+
+    <div class="container">
+        <h2>📋 작업 관리</h2>
+        <button onclick="createTestTask()">테스트 작업 생성</button>
+        <button onclick="updateTaskStatus('processing')" id="update-processing-btn" disabled>처리 중으로 변경</button>
+        <button onclick="updateTaskStatus('completed')" id="update-completed-btn" disabled>완료로 변경</button>
+        <button onclick="updateTaskStatus('failed')" id="update-failed-btn" disabled>실패로 변경</button>
+        
+        <div id="current-task" class="task-info" style="display: none;">
+            <h3>현재 작업 정보</h3>
+            <p><strong>작업 ID:</strong> <span id="task-id"></span></p>
+            <p><strong>상태:</strong> <span id="task-status"></span></p>
+            <p><strong>진행률:</strong></p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            <p><strong>메시지:</strong> <span id="task-message"></span></p>
+            <div id="task-result"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>📝 실시간 메시지 로그</h2>
+        <div class="message-log" id="message-log"></div>
+        <button onclick="clearLog()">로그 지우기</button>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentTaskId = null;
+        const API_BASE_URL = window.location.origin + '/mlserver';
+
+        // WebSocket 연결
+        function connectWebSocket() {
+            if (!currentTaskId) {
+                logMessage('먼저 작업을 생성해주세요.');
+                return;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                logMessage('이미 연결되어 있습니다.');
+                return;
+            }
+
+            const WS_BASE_URL = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host;
+            ws = new WebSocket(WS_BASE_URL + '/ws/task/' + currentTaskId + '/');
+            
+            ws.onopen = function(event) {
+                updateConnectionStatus('connected', 'WebSocket 연결됨');
+                document.getElementById('connect-btn').disabled = true;
+                document.getElementById('disconnect-btn').disabled = false;
+                logMessage('WebSocket 연결됨 - Task ID: ' + currentTaskId);
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    logMessage('수신: ' + JSON.stringify(data, null, 2));
+                    handleTaskUpdate(data);
+                } catch (error) {
+                    logMessage('JSON 파싱 오류: ' + error.message);
+                    logMessage('원본 데이터: ' + event.data);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                updateConnectionStatus('disconnected', 'WebSocket 연결 해제됨');
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('disconnect-btn').disabled = true;
+                logMessage('WebSocket 연결 해제됨 (코드: ' + event.code + ')');
+            };
+            
+            ws.onerror = function(error) {
+                updateConnectionStatus('failed', 'WebSocket 오류 발생');
+                logMessage('WebSocket 오류: ' + error);
+            };
+        }
+
+        // WebSocket 연결 해제
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // 연결 상태 업데이트
+        function updateConnectionStatus(status, message) {
+            const statusDiv = document.getElementById('ws-status');
+            statusDiv.className = 'status ' + status;
+            statusDiv.textContent = message;
+        }
+
+        // 메시지 로그에 추가
+        function logMessage(message) {
+            const log = document.getElementById('message-log');
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `[${timestamp}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // 로그 지우기
+        function clearLog() {
+            document.getElementById('message-log').innerHTML = '';
+        }
+
+        // 작업 업데이트 처리
+        function handleTaskUpdate(data) {
+            if (data.type === 'task_update' || data.type === 'task_completed' || data.type === 'task_failed') {
+                const taskData = data.data;
+                
+                // 작업 정보 표시
+                document.getElementById('current-task').style.display = 'block';
+                document.getElementById('task-id').textContent = currentTaskId;
+                document.getElementById('task-status').textContent = taskData.status || '알 수 없음';
+                document.getElementById('task-message').textContent = taskData.message || '';
+                
+                // 진행률 업데이트
+                const progress = taskData.progress || 0;
+                document.getElementById('progress-fill').style.width = (progress * 100) + '%';
+                
+                // 결과 표시
+                const resultDiv = document.getElementById('task-result');
+                if (taskData.result) {
+                    resultDiv.innerHTML = '<div class="result-box"><h4>추정 결과:</h4><pre>' + JSON.stringify(taskData.result, null, 2) + '</pre></div>';
+                } else if (taskData.error) {
+                    resultDiv.innerHTML = '<div class="error-box"><h4>오류:</h4><pre>' + taskData.error + '</pre></div>';
+                } else {
+                    resultDiv.innerHTML = '';
+                }
+                
+                // 상태에 따른 버튼 활성화/비활성화
+                updateButtonStates(taskData.status);
+            }
+        }
+
+        // 버튼 상태 업데이트
+        function updateButtonStates(status) {
+            document.getElementById('update-processing-btn').disabled = status === 'processing';
+            document.getElementById('update-completed-btn').disabled = status === 'completed';
+            document.getElementById('update-failed-btn').disabled = status === 'failed';
+        }
+
+        // 테스트 작업 생성
+        async function createTestTask() {
+            try {
+                logMessage('테스트 작업 생성 중...');
+                
+                const response = await fetch(`${API_BASE_URL}/api/test/create-task/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentTaskId = data.data.task_id;
+                    logMessage('작업 생성 성공: ' + currentTaskId);
+                    
+                    // 작업 정보 표시
+                    document.getElementById('current-task').style.display = 'block';
+                    document.getElementById('task-id').textContent = currentTaskId;
+                    document.getElementById('task-status').textContent = data.data.status;
+                    document.getElementById('task-message').textContent = data.data.message;
+                    
+                    // WebSocket 연결 버튼 활성화
+                    document.getElementById('connect-btn').disabled = false;
+                    
+                    logMessage('이제 WebSocket 연결 버튼을 눌러주세요.');
+                } else {
+                    logMessage('작업 생성 실패: ' + data.error);
+                }
+            } catch (error) {
+                logMessage('작업 생성 오류: ' + error.message);
+            }
+        }
+
+        // 작업 상태 업데이트
+        async function updateTaskStatus(newStatus) {
+            if (!currentTaskId) {
+                logMessage('먼저 작업을 생성해주세요.');
+                return;
+            }
+
+            try {
+                logMessage(`작업 상태를 '${newStatus}'로 변경 중...`);
+                
+                const updateData = {
+                    status: newStatus,
+                    progress: newStatus === 'completed' ? 1.0 : 0.5,
+                    message: newStatus === 'completed' ? '작업이 완료되었습니다.' : 
+                            newStatus === 'failed' ? '작업이 실패했습니다.' : '작업을 처리 중입니다.'
+                };
+                
+                const response = await fetch(`${API_BASE_URL}/api/test/update-task/${currentTaskId}/`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(updateData)
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    logMessage('작업 상태 업데이트 성공');
+                    // WebSocket을 통해 실시간 업데이트가 전송됨
+                } else {
+                    logMessage('작업 상태 업데이트 실패: ' + data.error);
+                }
+            } catch (error) {
+                logMessage('작업 상태 업데이트 오류: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html> 

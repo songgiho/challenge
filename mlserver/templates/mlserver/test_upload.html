@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>음식 질량 추정 - 파일 업로드 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .processing { background-color: #fff3cd; color: #856404; }
+        .completed { background-color: #d1ecf1; color: #0c5460; }
+        .failed { background-color: #f8d7da; color: #721c24; }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        .message-log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .upload-section {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+        }
+        .upload-section.dragover {
+            border-color: #007bff;
+            background-color: #f8f9ff;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .result-box {
+            background-color: #e8f5e8;
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .error-box {
+            background-color: #f8d7da;
+            border: 1px solid #dc3545;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+            color: #721c24;
+        }
+        .task-info {
+            background-color: #e6f0ff;
+            border: 1px solid #b2cfff;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .file-info {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 5px;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .file-preview {
+            max-width: 300px;
+            max-height: 200px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>🍽️ 음식 질량 추정 - 파일 업로드 테스트</h1>
+    
+    <div class="container">
+        <h2>🔌 WebSocket 연결 상태</h2>
+        <div id="ws-status" class="status disconnected">연결되지 않음</div>
+        <button id="connect-btn" onclick="connectWebSocket()" disabled>WebSocket 연결</button>
+        <button id="disconnect-btn" onclick="disconnectWebSocket()" disabled>연결 해제</button>
+    </div>
+
+    <div class="container">
+        <h2>📤 이미지 파일 업로드</h2>
+        <div class="upload-section" id="upload-area">
+            <p>이미지 파일을 드래그 앤 드롭하거나 클릭하여 선택하세요</p>
+            <input type="file" id="file-input" accept="image/*">
+            <button onclick="document.getElementById('file-input').click()">파일 선택</button>
+        </div>
+        <div id="file-preview"></div>
+        <div id="upload-status"></div>
+    </div>
+
+    <div class="container">
+        <h2>📊 작업 진행 상황</h2>
+        <div id="task-info" class="task-info" style="display: none;">
+            <h3>현재 작업 정보</h3>
+            <p><strong>작업 ID:</strong> <span id="task-id"></span></p>
+            <p><strong>상태:</strong> <span id="task-status"></span></p>
+            <p><strong>진행률:</strong></p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            <p><strong>메시지:</strong> <span id="task-message"></span></p>
+            <div id="task-result"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>📝 실시간 메시지 로그</h2>
+        <div class="message-log" id="message-log"></div>
+        <button onclick="clearLog()">로그 지우기</button>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentTaskId = null;
+        const API_BASE_URL = window.location.origin + '/mlserver';
+
+        // WebSocket 연결
+        function connectWebSocket() {
+            if (!currentTaskId) {
+                logMessage('먼저 파일을 업로드해주세요.');
+                return;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                logMessage('이미 연결되어 있습니다.');
+                return;
+            }
+
+            const WS_BASE_URL = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host;
+            ws = new WebSocket(WS_BASE_URL + '/ws/task/' + currentTaskId + '/');
+            
+            ws.onopen = function(event) {
+                updateConnectionStatus('connected', 'WebSocket 연결됨');
+                document.getElementById('connect-btn').disabled = true;
+                document.getElementById('disconnect-btn').disabled = false;
+                logMessage('WebSocket 연결됨 - Task ID: ' + currentTaskId);
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    logMessage('수신: ' + JSON.stringify(data, null, 2));
+                    logMessage('메시지 타입: ' + data.type);
+                    logMessage('데이터 구조: ' + Object.keys(data));
+                    handleTaskUpdate(data);
+                } catch (error) {
+                    logMessage('JSON 파싱 오류: ' + error.message);
+                    logMessage('원본 데이터: ' + event.data);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                updateConnectionStatus('disconnected', 'WebSocket 연결 해제됨');
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('disconnect-btn').disabled = true;
+                logMessage('WebSocket 연결 해제됨 (코드: ' + event.code + ')');
+            };
+            
+            ws.onerror = function(error) {
+                updateConnectionStatus('failed', 'WebSocket 오류 발생');
+                logMessage('WebSocket 오류: ' + error);
+            };
+        }
+
+        // WebSocket 연결 해제
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // 연결 상태 업데이트
+        function updateConnectionStatus(status, message) {
+            const statusDiv = document.getElementById('ws-status');
+            statusDiv.className = 'status ' + status;
+            statusDiv.textContent = message;
+        }
+
+        // 메시지 로그에 추가
+        function logMessage(message) {
+            const log = document.getElementById('message-log');
+            const timestamp = new Date().toLocaleTimeString();
+            log.innerHTML += `[${timestamp}] ${message}\n`;
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // 로그 지우기
+        function clearLog() {
+            document.getElementById('message-log').innerHTML = '';
+        }
+
+        // 작업 업데이트 처리
+        function handleTaskUpdate(data) {
+            logMessage('메시지 타입: ' + data.type);
+            
+            if (data.type === 'task.update' || data.type === 'task.completed' || data.type === 'task.failed') {
+                const taskData = data.data;
+                
+                // 작업 정보 표시
+                document.getElementById('task-info').style.display = 'block';
+                document.getElementById('task-id').textContent = currentTaskId;
+                document.getElementById('task-status').textContent = taskData.status || '알 수 없음';
+                document.getElementById('task-message').textContent = taskData.message || '';
+                
+                // 진행률 업데이트 (0-1 소수 또는 0-100 정수 모두 처리)
+                let progress = taskData.progress || 0;
+                if (progress > 1) {
+                    progress = progress / 100.0; // 0-100을 0-1로 변환
+                }
+                document.getElementById('progress-fill').style.width = (progress * 100) + '%';
+                
+                // 결과 표시
+                const resultDiv = document.getElementById('task-result');
+                if (taskData.result) {
+                    resultDiv.innerHTML = '<div class="result-box"><h4>추정 결과:</h4><pre>' + JSON.stringify(taskData.result, null, 2) + '</pre></div>';
+                } else if (taskData.error) {
+                    resultDiv.innerHTML = '<div class="error-box"><h4>오류:</h4><pre>' + taskData.error + '</pre></div>';
+                } else {
+                    resultDiv.innerHTML = '';
+                }
+            }
+        }
+
+        // 파일 선택 처리
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleFileSelect(file);
+            }
+        });
+
+        // 드래그 앤 드롭 처리
+        const uploadArea = document.getElementById('upload-area');
+        
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileSelect(files[0]);
+            }
+        });
+
+        // 파일 선택 처리
+        function handleFileSelect(file) {
+            // 파일 타입 검증
+            if (!file.type.startsWith('image/')) {
+                alert('이미지 파일만 업로드 가능합니다.');
+                return;
+            }
+
+            // 파일 크기 검증 (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                alert('파일 크기는 10MB 이하여야 합니다.');
+                return;
+            }
+
+            // 파일 미리보기
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const previewDiv = document.getElementById('file-preview');
+                previewDiv.innerHTML = `
+                    <div class="file-info">
+                        <p><strong>파일명:</strong> ${file.name}</p>
+                        <p><strong>크기:</strong> ${(file.size / 1024).toFixed(2)} KB</p>
+                        <p><strong>타입:</strong> ${file.type}</p>
+                    </div>
+                    <img src="${e.target.result}" alt="미리보기" class="file-preview">
+                    <button onclick="uploadFile('${file.name}')">업로드 시작</button>
+                `;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // 파일 업로드
+        async function uploadFile(filename) {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                logMessage('업로드할 파일이 없습니다.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('image', file);
+
+            try {
+                document.getElementById('upload-status').innerHTML = '<div class="status processing">업로드 중...</div>';
+                logMessage('파일 업로드 시작: ' + file.name + ' (' + file.size + ' bytes)');
+                
+                const response = await fetch(`${API_BASE_URL}/api/upload/`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentTaskId = data.data.task_id;
+                    logMessage('업로드 성공: ' + data.data.message);
+                    logMessage('작업 ID: ' + currentTaskId);
+                    
+                    // 업로드 상태 업데이트
+                    document.getElementById('upload-status').innerHTML = '<div class="status completed">업로드 완료</div>';
+                    
+                    // 자동으로 WebSocket 연결
+                    logMessage('자동으로 WebSocket 연결을 시도합니다...');
+                    connectWebSocket();
+                } else {
+                    document.getElementById('upload-status').innerHTML = '<div class="status failed">업로드 실패</div>';
+                    logMessage('업로드 실패: ' + data.error);
+                }
+            } catch (error) {
+                document.getElementById('upload-status').innerHTML = '<div class="status failed">업로드 오류</div>';
+                logMessage('업로드 오류: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html> 
