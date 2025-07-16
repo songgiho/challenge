@@ -39,7 +39,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'channels',
     'challenges',
+    'mlserver',
 ]
 
 MIDDLEWARE = [
@@ -166,3 +168,31 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Channels 설정
+ASGI_APPLICATION = 'config.asgi.application'
+
+# Django 개발 서버에서 웹소켓 활성화
+CHANNELS_WSGI_ALLOW_ASYNC_TO_SYNC = True
+# Channel Layers 설정 (In-Memory 사용 - 개발용)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
+
+# Celery 설정
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+
+# ML 서버 설정
+ML_SERVER_URL = 'http://localhost:8001'
+
+# Media files
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+
