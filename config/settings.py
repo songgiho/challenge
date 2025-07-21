@@ -43,9 +43,9 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'channels',
-    'rest_framework.authtoken',  # Token 인증 추가
-    'api_integrated.apps.ApiIntegratedConfig',  # 팀원의 완성된 API 앱
-    'mlserver',  # MLServer 연동 유지
+    'rest_framework.authtoken',
+    'api_integrated.apps.ApiIntegratedConfig',  # 메인 API 앱
+    'mlserver',  # MLServer 연동
 ]
 
 MIDDLEWARE = [
