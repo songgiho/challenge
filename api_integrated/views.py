@@ -143,6 +143,33 @@ class AnalyzeImageView(APIView):
         image_path = default_storage.path(file_name)
         image_url = request.build_absolute_uri(default_storage.url(file_name))
 
+        # MLServer 연동 함수 추가
+        def call_ml_server(image_file):
+            """MLServer API 호출"""
+            try:
+                ml_server_url = getattr(settings, 'ML_SERVER_URL', 'http://localhost:8001')
+                
+                # 파일을 다시 읽어서 MLServer로 전송
+                image_file.seek(0)  # 파일 포인터를 처음으로 되돌림
+                files = {'file': (image_file.name, image_file, image_file.content_type)}
+                
+                response = requests.post(
+                    f'{ml_server_url}/api/v1/estimate',
+                    files=files,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return result
+                else:
+                    print(f"MLServer 오류: {response.status_code} - {response.text}")
+                    return None
+                    
+            except Exception as e:
+                print(f"MLServer 호출 실패: {e}")
+                return None
+
         # --- Gemini 2.5 Flash 분석 함수들 (food_calendar/utils.py, views.py 기반) ---
         def load_food_grades():
             food_grades = {}
@@ -305,8 +332,99 @@ class AnalyzeImageView(APIView):
                 print(f"AI 피드백 생성 실패: {e}")
                 return f"{food_name}의 칼로리는 {calories}kcal입니다. {'건강한 선택입니다!' if calories < 600 else '적당한 칼로리입니다.' if calories < 800 else '칼로리가 높으니 다음 식사는 가볍게 드세요.'}"
 
-        # --- 실제 이미지 분석 ---
+        # --- 실제 이미지 분석 (method 파라미터에 따라 분기) ---
         try:
+            # method 파라미터 확인
+            analysis_method = request.POST.get('method', 'auto')  # 기본값: auto (MLServer 우선)
+            
+            if analysis_method == 'gemini_only':
+                # Gemini만 사용 - MLServer 건너뛰기
+                print("Gemini API 전용 분석 시작...")
+                ml_result = None  # MLServer 결과를 None으로 설정하여 Gemini로 넘어가도록
+            else:
+                # 1. MLServer 시도 (auto 모드일 때만)
+                print("MLServer로 이미지 분석 시도...")
+                ml_result = call_ml_server(request.FILES['image'])
+            
+            if ml_result and 'mass_estimation' in ml_result:
+                print("MLServer 분석 성공!")
+                mass_estimation = ml_result['mass_estimation']
+                
+                # MLServer 결과에서 첫 번째 음식 정보 추출
+                if 'foods' in mass_estimation and mass_estimation['foods']:
+                    first_food = mass_estimation['foods'][0]
+                    food_name = first_food.get('food_name', '알수없음')
+                    mass = first_food.get('estimated_mass_g', 0)
+                    confidence = first_food.get('confidence', 0.5)
+                    
+                    print(f"MLServer 결과: {food_name}, {mass}g, 신뢰도: {confidence}")
+                    
+                    # CSV에서 칼로리 및 영양정보 계산
+                    carbs = protein = fat = 0
+                    calories = 0
+                    grade = 'C'
+                    
+                    try:
+                        if food_data_df is not None:
+                            # 1. 완전일치
+                            row = food_data_df[food_data_df['식품명'] == food_name]
+                            # 2. 부분일치
+                            if row.empty:
+                                def clean_food_name(name):
+                                    return re.sub(r'\s*\([^)]*\)', '', name).strip()
+                                cleaned_name = clean_food_name(food_name)
+                                row = food_data_df[food_data_df['식품명'].str.contains(cleaned_name, na=False, regex=False)]
+                            
+                            if not row.empty:
+                                # 100g당 영양정보를 실제 질량에 맞게 계산
+                                calories_per_100g = float(row.iloc[0]['에너지(kcal)']) if row.iloc[0]['에너지(kcal)'] else 0
+                                calories = round(calories_per_100g * (mass / 100), 1)
+                                
+                                sugar = float(row.iloc[0]['당류(g)']) if '당류(g)' in row.columns and row.iloc[0]['당류(g)'] else 0
+                                fiber = float(row.iloc[0]['식이섬유(g)']) if '식이섬유(g)' in row.columns and row.iloc[0]['식이섬유(g)'] else 0
+                                carbs_per_100g = sugar + fiber
+                                protein_per_100g = float(row.iloc[0]['단백질(g)']) if row.iloc[0]['단백질(g)'] else 0
+                                fat_per_100g = float(row.iloc[0]['포화지방산(g)']) if '포화지방산(g)' in row.columns and row.iloc[0]['포화지방산(g)'] else 0
+                                
+                                carbs = round(carbs_per_100g * (mass / 100), 1)
+                                protein = round(protein_per_100g * (mass / 100), 1)
+                                fat = round(fat_per_100g * (mass / 100), 1)
+                                
+                                if 'kfni_grade' in row.columns and row.iloc[0]['kfni_grade']:
+                                    grade = row.iloc[0]['kfni_grade']
+                            else:
+                                # CSV에서 찾지 못한 경우 기본값 사용
+                                calories = mass * 2  # 기본 칼로리 추정
+                                
+                    except Exception as e:
+                        print(f"CSV 영양소 추출 실패: {e}")
+                        calories = mass * 2  # 기본 칼로리 추정
+                    
+                    score = calculate_nutrition_score(food_name, calories, mass)
+                    ai_feedback = generate_ai_feedback(food_name, calories, mass, grade)
+                    
+                    return Response({
+                        "success": True,
+                        "data": {
+                            "mealType": "lunch",
+                            "foodName": food_name,
+                            "calories": calories,
+                            "mass": mass,  # MLServer에서 얻은 정확한 질량
+                            "grade": grade,
+                            "score": score,
+                            "aiComment": ai_feedback,
+                            "carbs": carbs,
+                            "protein": protein,
+                            "fat": fat,
+                            "imageUrl": image_url,
+                            "confidence": confidence,
+                            "analysis_method": "MLServer"  # 분석 방법 표시
+                        },
+                        "message": "MLServer로 이미지 분석 완료"
+                    }, status=status.HTTP_200_OK)
+            
+            # 2. MLServer 실패 시 Gemini API 백업 사용
+            print("MLServer 실패, Gemini API로 백업 분석 시도...")
             with open(image_path, 'rb') as img_file:
                 img_b64 = base64.b64encode(img_file.read()).decode('utf-8')
             prompt = {
