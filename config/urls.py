@@ -16,9 +16,16 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('challenges.urls')),
-    path('mlserver/', include('mlserver.urls')),
+    path('api/', include('api_integrated.urls')),  # 팀원의 완성된 API
+    # path('', include('challenges.urls')),  # 기존 챌린지 URL (임시 주석)
+    path('mlserver/', include('mlserver.urls')),  # MLServer 연동 유지
 ]
+
+# Media files serving (개발 환경용)
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
