@@ -7,6 +7,7 @@
 ```bash
 # backend 폴더에서 실행
 start-services.bat
+./start-services.bat
 ```
 
 ### 서비스 종료
