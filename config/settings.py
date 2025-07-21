@@ -22,6 +22,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-xn4utqk-h$t1qgswtvo3*lqj4e8$*a&m-q2z5$6sst1$)2b^t5'
 
+# Gemini API Key (팀원 설정 추가)
+GEMINI_API_KEY = 'AIzaSyBHk7IcID52trC-d2rZQzFrpPKH-1sCjKo'  # 실제 Gemini API 키
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
@@ -40,8 +43,9 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'channels',
-    'challenges',
-    'mlserver',
+    'rest_framework.authtoken',  # Token 인증 추가
+    'api_integrated.apps.ApiIntegratedConfig',  # 팀원의 완성된 API 앱
+    'mlserver',  # MLServer 연동 유지
 ]
 
 MIDDLEWARE = [
@@ -146,12 +150,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # REST Framework 설정
 REST_FRAMEWORK = {
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',  # 임시로 모든 접근 허용
-    ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',  # 팀원 설정
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',  # 팀원 설정
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -204,6 +209,9 @@ else:
 
 # ML 서버 설정
 ML_SERVER_URL = 'http://localhost:8001'
+
+# Gemini API 키 (팀원 기능용)
+GEMINI_API_KEY = 'AIzaSyBHk7IcID52trC-d2rZQzFrpPKH-1sCjKo'  # 실제 Gemini API 키
 
 # Media files
 MEDIA_URL = '/media/'
